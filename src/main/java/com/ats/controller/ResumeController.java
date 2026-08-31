@@ -34,15 +34,23 @@ public class ResumeController {
      */
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ResumeDTO> uploadResume(@RequestParam("file") MultipartFile file) {
-        log.info("Resume upload: name={}, size={}, type={}", file.getOriginalFilename(),
-                file.getSize(), file.getContentType());
+        String filename = file.getOriginalFilename();
+        String contentType = file.getContentType();
+        log.info("Resume upload: name={}, size={}, type={}", filename, file.getSize(), contentType);
 
         if (file.isEmpty()) {
+            log.warn("Uploaded file is empty");
             return ResponseEntity.badRequest().build();
         }
 
-        String contentType = file.getContentType();
-        if (contentType == null || !contentType.equals("application/pdf")) {
+        // Validate by filename extension or content type
+        boolean isPdf = (filename != null && filename.toLowerCase().endsWith(".pdf"))
+                || (contentType != null && (contentType.equalsIgnoreCase("application/pdf")
+                || contentType.equalsIgnoreCase("application/x-pdf")
+                || contentType.equalsIgnoreCase("application/octet-stream")));
+
+        if (!isPdf) {
+            log.warn("Rejected non-PDF file: name={}, type={}", filename, contentType);
             return ResponseEntity.badRequest().build();
         }
 
@@ -51,8 +59,8 @@ public class ResumeController {
             String rawText = pdfParser.extractText(pdfBytes);
             ResumeDTO resume = resumeParser.parse(rawText);
             return ResponseEntity.ok(resume);
-        } catch (IOException e) {
-            log.error("Failed to read uploaded file", e);
+        } catch (Exception e) {
+            log.error("Failed to parse uploaded resume PDF", e);
             return ResponseEntity.internalServerError().build();
         }
     }
