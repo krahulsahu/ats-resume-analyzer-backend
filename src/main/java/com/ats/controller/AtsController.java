@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
 /**
- * REST controller for ATS score calculation and PDF report generation.
+ * REST controller for ATS score calculation and multi-template PDF report generation.
  */
 @RestController
 @RequestMapping("/api/ats")
@@ -59,7 +59,7 @@ public class AtsController {
     }
 
     /**
-     * Generate and download an ATS-friendly resume PDF.
+     * Generate and download an ATS-friendly resume PDF with chosen template.
      */
     @PostMapping("/pdf")
     public ResponseEntity<byte[]> generatePdf(@RequestBody Map<String, Object> request) {
@@ -68,17 +68,23 @@ public class AtsController {
             SuggestionDTO suggestions = request.containsKey("suggestions")
                     ? objectMapper.convertValue(request.get("suggestions"), SuggestionDTO.class)
                     : null;
+            String template = request.containsKey("template") && request.get("template") != null
+                    ? request.get("template").toString() : "modern";
 
             if (resume == null) {
                 return ResponseEntity.badRequest().build();
             }
 
-            byte[] pdf = pdfGeneratorService.generate(resume, suggestions);
+            byte[] pdf = pdfGeneratorService.generate(resume, suggestions, template);
+
+            String candidateName = (resume.getName() != null && !resume.getName().isBlank())
+                    ? resume.getName().replaceAll("[^a-zA-Z0-9_-]", "_")
+                    : "resume";
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_PDF);
             headers.setContentDisposition(ContentDisposition.builder("attachment")
-                    .filename("ats_resume.pdf")
+                    .filename(candidateName + "_ats_" + template + ".pdf")
                     .build());
             headers.setContentLength(pdf.length);
 

@@ -1,5 +1,6 @@
 package com.ats.controller;
 
+import com.ats.config.GeminiConfig;
 import com.ats.dto.JobDTO;
 import com.ats.dto.ResumeDTO;
 import com.ats.dto.SuggestionDTO;
@@ -13,7 +14,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
 /**
- * REST controller for AI-powered resume improvement suggestions.
+ * REST controller for AI-powered resume improvement suggestions (Google Gemini 1.5 Flash).
  */
 @RestController
 @RequestMapping("/api/ai")
@@ -22,10 +23,12 @@ public class AiController {
     private static final Logger log = LoggerFactory.getLogger(AiController.class);
 
     private final AiSuggestionService aiSuggestionService;
+    private final GeminiConfig geminiConfig;
     private final ObjectMapper objectMapper;
 
-    public AiController(AiSuggestionService aiSuggestionService, ObjectMapper objectMapper) {
+    public AiController(AiSuggestionService aiSuggestionService, GeminiConfig geminiConfig, ObjectMapper objectMapper) {
         this.aiSuggestionService = aiSuggestionService;
+        this.geminiConfig = geminiConfig;
         this.objectMapper = objectMapper;
     }
 
@@ -35,6 +38,13 @@ public class AiController {
     @PostMapping("/summary")
     public ResponseEntity<Map<String, String>> improveSummary(@RequestBody Map<String, Object> request) {
         try {
+            if (request.containsKey("apiKey") && request.get("apiKey") != null) {
+                String customKey = request.get("apiKey").toString().trim();
+                if (!customKey.isBlank()) {
+                    geminiConfig.setApiKey(customKey);
+                }
+            }
+
             ResumeDTO resume = objectMapper.convertValue(request.get("resume"), ResumeDTO.class);
             JobDTO job = objectMapper.convertValue(request.get("job"), JobDTO.class);
 
@@ -48,9 +58,8 @@ public class AiController {
             String improvedSummary = aiSuggestionService.improveSummary(resume, job);
             return ResponseEntity.ok(Map.of("summary", improvedSummary));
         } catch (Exception e) {
-            log.error("AI summary generation failed", e);
-            return ResponseEntity.ok(Map.of("summary",
-                    "AI improvement unavailable. Ensure Ollama is running."));
+            log.error("AI summary generation error", e);
+            return ResponseEntity.internalServerError().build();
         }
     }
 
@@ -60,6 +69,13 @@ public class AiController {
     @PostMapping("/improve")
     public ResponseEntity<SuggestionDTO> generateSuggestions(@RequestBody Map<String, Object> request) {
         try {
+            if (request.containsKey("apiKey") && request.get("apiKey") != null) {
+                String customKey = request.get("apiKey").toString().trim();
+                if (!customKey.isBlank()) {
+                    geminiConfig.setApiKey(customKey);
+                }
+            }
+
             ResumeDTO resume = objectMapper.convertValue(request.get("resume"), ResumeDTO.class);
             JobDTO job = objectMapper.convertValue(request.get("job"), JobDTO.class);
 
@@ -73,10 +89,8 @@ public class AiController {
             SuggestionDTO suggestions = aiSuggestionService.generateSuggestions(resume, job);
             return ResponseEntity.ok(suggestions);
         } catch (Exception e) {
-            log.error("AI suggestion generation failed", e);
-            return ResponseEntity.ok(SuggestionDTO.builder()
-                    .improvedSummary("AI improvement unavailable. Ensure Ollama is running.")
-                    .build());
+            log.error("AI suggestion generation error", e);
+            return ResponseEntity.internalServerError().build();
         }
     }
 }
