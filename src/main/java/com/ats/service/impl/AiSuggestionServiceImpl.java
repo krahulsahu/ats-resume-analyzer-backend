@@ -230,6 +230,7 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("x-goog-api-key", geminiConfig.getApiKey());
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
         log.info("Calling Google Gemini 1.5 Flash API...");
