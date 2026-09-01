@@ -19,12 +19,6 @@ gemini:
   model: gemini-1.5-flash
   base-url: https://generativelanguage.googleapis.com/v1beta/models
 
-# Ollama Fallback Configuration
-ollama:
-  base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
-  model: llama3.1:8b
-  timeout: 120000
-
 # Logging
 logging:
   level:

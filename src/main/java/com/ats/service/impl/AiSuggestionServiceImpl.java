@@ -1,7 +1,6 @@
 package com.ats.service.impl;
 
 import com.ats.config.GeminiConfig;
-import com.ats.config.OllamaConfig;
 import com.ats.dto.JobDTO;
 import com.ats.dto.ResumeDTO;
 import com.ats.dto.SuggestionDTO;
@@ -17,7 +16,7 @@ import org.springframework.web.client.RestTemplate;
 import java.util.*;
 
 /**
- * AI-powered resume improvement service using Google Gemini 1.5 Flash (with Ollama fallback).
+ * AI-powered resume improvement service using Google Gemini 1.5 Flash.
  * Used strictly for rewriting and suggestions — never for deterministic scoring.
  */
 @Service
@@ -26,14 +25,11 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
     private static final Logger log = LoggerFactory.getLogger(AiSuggestionServiceImpl.class);
 
     private final GeminiConfig geminiConfig;
-    private final OllamaConfig ollamaConfig;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
-    public AiSuggestionServiceImpl(GeminiConfig geminiConfig, OllamaConfig ollamaConfig,
-                                   RestTemplate restTemplate, ObjectMapper objectMapper) {
+    public AiSuggestionServiceImpl(GeminiConfig geminiConfig, RestTemplate restTemplate, ObjectMapper objectMapper) {
         this.geminiConfig = geminiConfig;
-        this.ollamaConfig = ollamaConfig;
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
     }
@@ -187,10 +183,9 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
         return suggestions;
     }
 
-    // --- AI Dispatcher: Gemini 1.5 Flash -> Ollama -> Fallback ---
+    // --- AI Dispatcher: Gemini 1.5 Flash -> Fallback ---
 
     private String callAi(String prompt) {
-        // Priority 1: Google Gemini 1.5 Flash
         if (geminiConfig.hasApiKey()) {
             try {
                 String geminiResponse = callGemini(prompt);
@@ -201,17 +196,6 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
                 log.warn("Gemini API call failed: {}", e.getMessage());
             }
         }
-
-        // Priority 2: Local Ollama
-        try {
-            String ollamaResponse = callOllama(prompt);
-            if (ollamaResponse != null && !ollamaResponse.isBlank()) {
-                return ollamaResponse;
-            }
-        } catch (Exception e) {
-            log.debug("Ollama unavailable: {}", e.getMessage());
-        }
-
         return null;
     }
 
@@ -249,29 +233,6 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
             } catch (Exception e) {
                 log.error("Failed to parse Gemini response", e);
             }
-        }
-        return null;
-    }
-
-    private String callOllama(String prompt) {
-        String url = ollamaConfig.getBaseUrl() + "/api/generate";
-
-        Map<String, Object> request = new HashMap<>();
-        request.put("model", ollamaConfig.getModel());
-        request.put("prompt", prompt);
-        request.put("stream", false);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
-
-        ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
-
-        if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-            try {
-                JsonNode jsonNode = objectMapper.readTree(response.getBody());
-                return jsonNode.path("response").asText("").trim();
-            } catch (Exception ignored) {}
         }
         return null;
     }
