@@ -9,7 +9,8 @@ import org.springframework.web.client.RestTemplate;
 import java.time.Duration;
 
 /**
- * Configuration for Google Gemini 1.5 Flash API and HTTP client.
+ * Configuration for Google Gemini 1.5 Flash API.
+ * The API key is securely loaded from environment variables / backend .env and never committed to code.
  */
 @Configuration
 public class GeminiConfig {
@@ -31,12 +32,24 @@ public class GeminiConfig {
                 .build();
     }
 
-    public String getApiKey() { return apiKey; }
-    public void setApiKey(String apiKey) { this.apiKey = apiKey; }
-    public String getModel() { return model; }
-    public String getBaseUrl() { return baseUrl; }
+    public String getApiKey() {
+        return apiKey != null ? apiKey.trim() : "";
+    }
+
+    public void setApiKey(String apiKey) {
+        this.apiKey = apiKey;
+    }
+
+    public String getModel() {
+        return model != null && !model.isBlank() ? model : "gemini-1.5-flash";
+    }
+
+    public String getBaseUrl() {
+        return baseUrl;
+    }
 
     public boolean hasApiKey() {
-        return apiKey != null && !apiKey.isBlank();
+        String key = getApiKey();
+        return key != null && !key.isBlank();
     }
 }

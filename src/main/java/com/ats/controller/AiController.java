@@ -1,6 +1,5 @@
 package com.ats.controller;
 
-import com.ats.config.GeminiConfig;
 import com.ats.dto.JobDTO;
 import com.ats.dto.ResumeDTO;
 import com.ats.dto.SuggestionDTO;
@@ -14,7 +13,8 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
 /**
- * REST controller for AI-powered resume improvement suggestions (Google Gemini 1.5 Flash).
+ * REST controller for AI-powered resume improvements using Google Gemini 1.5 Flash.
+ * Authentication and API keys are strictly managed on the backend.
  */
 @RestController
 @RequestMapping("/api/ai")
@@ -23,12 +23,10 @@ public class AiController {
     private static final Logger log = LoggerFactory.getLogger(AiController.class);
 
     private final AiSuggestionService aiSuggestionService;
-    private final GeminiConfig geminiConfig;
     private final ObjectMapper objectMapper;
 
-    public AiController(AiSuggestionService aiSuggestionService, GeminiConfig geminiConfig, ObjectMapper objectMapper) {
+    public AiController(AiSuggestionService aiSuggestionService, ObjectMapper objectMapper) {
         this.aiSuggestionService = aiSuggestionService;
-        this.geminiConfig = geminiConfig;
         this.objectMapper = objectMapper;
     }
 
@@ -38,13 +36,6 @@ public class AiController {
     @PostMapping("/summary")
     public ResponseEntity<Map<String, String>> improveSummary(@RequestBody Map<String, Object> request) {
         try {
-            if (request.containsKey("apiKey") && request.get("apiKey") != null) {
-                String customKey = request.get("apiKey").toString().trim();
-                if (!customKey.isBlank()) {
-                    geminiConfig.setApiKey(customKey);
-                }
-            }
-
             ResumeDTO resume = objectMapper.convertValue(request.get("resume"), ResumeDTO.class);
             JobDTO job = objectMapper.convertValue(request.get("job"), JobDTO.class);
 
@@ -69,13 +60,6 @@ public class AiController {
     @PostMapping("/improve")
     public ResponseEntity<SuggestionDTO> generateSuggestions(@RequestBody Map<String, Object> request) {
         try {
-            if (request.containsKey("apiKey") && request.get("apiKey") != null) {
-                String customKey = request.get("apiKey").toString().trim();
-                if (!customKey.isBlank()) {
-                    geminiConfig.setApiKey(customKey);
-                }
-            }
-
             ResumeDTO resume = objectMapper.convertValue(request.get("resume"), ResumeDTO.class);
             JobDTO job = objectMapper.convertValue(request.get("job"), JobDTO.class);
 

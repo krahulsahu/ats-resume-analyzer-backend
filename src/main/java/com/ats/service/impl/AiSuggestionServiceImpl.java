@@ -17,7 +17,7 @@ import java.util.*;
 
 /**
  * AI-powered resume improvement service using Google Gemini 1.5 Flash.
- * Used strictly for rewriting and suggestions — never for deterministic scoring.
+ * All prompts enforce structured JSON responses with no markdown wrappers.
  */
 @Service
 public class AiSuggestionServiceImpl implements AiSuggestionService {
@@ -39,7 +39,16 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
         String prompt = buildSummaryPrompt(resume, job);
         String response = callAi(prompt);
         if (response != null && !response.isBlank()) {
-            return response;
+            try {
+                String cleanJson = extractJson(response);
+                JsonNode node = objectMapper.readTree(cleanJson);
+                if (node.has("summary") && !node.path("summary").asText().isBlank()) {
+                    return node.path("summary").asText().trim();
+                }
+            } catch (Exception e) {
+                log.warn("Summary JSON parse failed, using raw response: {}", e.getMessage());
+                return response.replaceAll("(?s)^```json\\s*", "").replaceAll("```$", "").trim();
+            }
         }
         return generateFallbackSummary(resume, job);
     }
@@ -77,10 +86,11 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
 
         // 4. Categorized Skills
         try {
-            Map<String, List<String>> categorized = categorizeSkills(resume.getSkills());
+            Map<String, List<String>> categorized = categorizeSkillsWithAi(resume.getSkills());
             builder.categorizedSkills(categorized);
         } catch (Exception e) {
             log.warn("Skill categorization error: {}", e.getMessage());
+            builder.categorizedSkills(categorizeSkillsHeuristic(resume.getSkills()));
         }
 
         // 5. General Tips
@@ -101,16 +111,24 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
 
             List<String> improvedBullets = new ArrayList<>();
             if (response != null && !response.isBlank()) {
-                improvedBullets = Arrays.stream(response.split("\\r?\\n"))
-                        .map(String::trim)
-                        .filter(s -> !s.isEmpty() && (s.startsWith("•") || s.startsWith("-") || s.startsWith("*") || s.length() > 20))
-                        .map(s -> s.replaceFirst("^[•\\-*\\d.]+\\s*", ""))
-                        .toList();
+                try {
+                    String cleanJson = extractJson(response);
+                    JsonNode node = objectMapper.readTree(cleanJson);
+                    if (node.has("bullets") && node.path("bullets").isArray()) {
+                        for (JsonNode b : node.path("bullets")) {
+                            if (!b.asText().isBlank()) {
+                                improvedBullets.add(b.asText().replaceFirst("^[•\\-*\\d.]+\\s*", "").trim());
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("Experience JSON parse fallback: {}", e.getMessage());
+                }
             }
 
             if (improvedBullets.isEmpty()) {
                 improvedBullets = exp.getBullets() != null ? exp.getBullets().stream()
-                        .map(b -> "Architected and delivered " + b + ", improving workflow automation and system reliability.")
+                        .map(b -> "Architected and delivered " + b + ", improving system throughput and workflow automation.")
                         .toList() : List.of();
             }
 
@@ -136,11 +154,17 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
 
             List<String> improvedBullets = new ArrayList<>();
             if (response != null && !response.isBlank()) {
-                improvedBullets = Arrays.stream(response.split("\\r?\\n"))
-                        .map(String::trim)
-                        .filter(s -> !s.isEmpty() && s.length() > 15)
-                        .map(s -> s.replaceFirst("^[•\\-*\\d.]+\\s*", ""))
-                        .toList();
+                try {
+                    String cleanJson = extractJson(response);
+                    JsonNode node = objectMapper.readTree(cleanJson);
+                    if (node.has("bullets") && node.path("bullets").isArray()) {
+                        for (JsonNode b : node.path("bullets")) {
+                            if (!b.asText().isBlank()) {
+                                improvedBullets.add(b.asText().replaceFirst("^[•\\-*\\d.]+\\s*", "").trim());
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
             }
 
             if (improvedBullets.isEmpty()) {
@@ -156,7 +180,45 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
         return result;
     }
 
-    private Map<String, List<String>> categorizeSkills(List<String> skills) {
+    private Map<String, List<String>> categorizeSkillsWithAi(List<String> skills) {
+        if (skills == null || skills.isEmpty()) return new LinkedHashMap<>();
+
+        String prompt = """
+                SYSTEM:
+                Categorize these technical skills into standard ATS resume categories. Return JSON only with no surrounding text.
+
+                SKILLS:
+                %s
+
+                OUTPUT JSON FORMAT:
+                {
+                  "Languages": [],
+                  "Backend": [],
+                  "Frontend": [],
+                  "Databases": [],
+                  "Cloud & DevOps": [],
+                  "Developer Tools": []
+                }
+                """.formatted(String.join(", ", skills));
+
+        String response = callAi(prompt);
+        if (response != null && !response.isBlank()) {
+            try {
+                String cleanJson = extractJson(response);
+                JsonNode node = objectMapper.readTree(cleanJson);
+                Map<String, List<String>> result = new LinkedHashMap<>();
+                node.fieldNames().forEachRemaining(key -> {
+                    List<String> list = new ArrayList<>();
+                    node.path(key).forEach(item -> list.add(item.asText()));
+                    if (!list.isEmpty()) result.put(key, list);
+                });
+                if (!result.isEmpty()) return result;
+            } catch (Exception ignored) {}
+        }
+        return categorizeSkillsHeuristic(skills);
+    }
+
+    private Map<String, List<String>> categorizeSkillsHeuristic(List<String> skills) {
         Map<String, List<String>> categorized = new LinkedHashMap<>();
         if (skills == null) return categorized;
 
@@ -183,61 +245,62 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
         return suggestions;
     }
 
-    // --- AI Dispatcher: Gemini 1.5 Flash -> Fallback ---
+    // --- Gemini 1.5 Flash Dispatcher ---
 
     private String callAi(String prompt) {
-        if (geminiConfig.hasApiKey()) {
-            try {
-                String geminiResponse = callGemini(prompt);
-                if (geminiResponse != null && !geminiResponse.isBlank()) {
-                    return geminiResponse;
-                }
-            } catch (Exception e) {
-                log.warn("Gemini API call failed: {}", e.getMessage());
-            }
-        }
-        return null;
-    }
+        if (!geminiConfig.hasApiKey()) return null;
 
-    private String callGemini(String prompt) {
-        String url = geminiConfig.getBaseUrl() + "/" + geminiConfig.getModel() + ":generateContent?key=" + geminiConfig.getApiKey();
+        try {
+            String url = geminiConfig.getBaseUrl() + "/" + geminiConfig.getModel() + ":generateContent?key=" + geminiConfig.getApiKey();
 
-        Map<String, Object> textPart = Map.of("text", prompt);
-        Map<String, Object> content = Map.of("parts", List.of(textPart));
-        Map<String, Object> requestBody = Map.of(
-                "contents", List.of(content),
-                "generationConfig", Map.of(
-                        "temperature", 0.7,
-                        "maxOutputTokens", 800
-                )
-        );
+            Map<String, Object> textPart = Map.of("text", prompt);
+            Map<String, Object> content = Map.of("parts", List.of(textPart));
+            Map<String, Object> requestBody = Map.of(
+                    "contents", List.of(content),
+                    "generationConfig", Map.of(
+                            "temperature", 0.4,
+                            "maxOutputTokens", 1000,
+                            "responseMimeType", "application/json"
+                    )
+            );
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("x-goog-api-key", geminiConfig.getApiKey());
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("x-goog-api-key", geminiConfig.getApiKey());
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-        log.info("Calling Google Gemini 1.5 Flash API...");
-        ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
 
-        if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-            try {
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 JsonNode root = objectMapper.readTree(response.getBody());
                 JsonNode candidates = root.path("candidates");
                 if (candidates.isArray() && candidates.size() > 0) {
                     JsonNode textNode = candidates.get(0).path("content").path("parts").get(0).path("text");
-                    String text = textNode.asText("");
-                    log.info("Gemini 1.5 Flash generated {} characters", text.length());
-                    return text.trim();
+                    return textNode.asText("").trim();
                 }
-            } catch (Exception e) {
-                log.error("Failed to parse Gemini response", e);
             }
+        } catch (Exception e) {
+            log.warn("Gemini API call failed: {}", e.getMessage());
         }
+
         return null;
     }
 
-    // --- Fallback Generation (Smart Heuristics) ---
+    private String extractJson(String text) {
+        if (text == null) return "{}";
+        String trimmed = text.trim();
+        if (trimmed.startsWith("```json")) {
+            trimmed = trimmed.substring(7);
+        } else if (trimmed.startsWith("```")) {
+            trimmed = trimmed.substring(3);
+        }
+        if (trimmed.endsWith("```")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 3);
+        }
+        return trimmed.trim();
+    }
+
+    // --- Fallbacks ---
 
     private String generateFallbackSummary(ResumeDTO resume, JobDTO job) {
         double years = resume.getExperience() != null ? resume.getExperience().stream()
@@ -281,11 +344,22 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
         return list;
     }
 
-    // --- Prompt Builders ---
+    // --- JSON Prompts ---
 
     private String buildSummaryPrompt(ResumeDTO resume, JobDTO job) {
         return """
-                You are an expert ATS resume writer. Write an ATS-optimized professional summary for this candidate targeting this job.
+                SYSTEM:
+                You are an expert ATS Resume Writer.
+
+                TASK:
+                Rewrite only the Professional Summary.
+
+                RULES:
+                - Maximum 60-75 words
+                - No fake experience or exaggerated titles
+                - Use keywords from the target job naturally
+                - Keep 100%% factual accuracy based on candidate background
+                - Return JSON ONLY (no markdown code blocks, no backticks)
 
                 CANDIDATE:
                 Name: %s
@@ -293,12 +367,11 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
                 Target Role: %s
                 Required Skills: %s
 
-                RULES:
-                - Output exactly 75-85 words.
-                - Start with years of experience and role.
-                - Incorporate key technical skills naturally.
-                - Highlight business impact and scalability.
-                - Return ONLY the summary paragraph, no intro or markdown title.
+                OUTPUT JSON FORMAT:
+                {
+                  "summary": "...",
+                  "keywordsAdded": ["skill1", "skill2"]
+                }
                 """.formatted(
                 resume.getName(),
                 String.join(", ", resume.getSkills() != null ? resume.getSkills() : List.of()),
@@ -309,7 +382,15 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
 
     private String buildExperiencePrompt(ResumeDTO.ExperienceDTO exp, JobDTO job) {
         return """
-                You are an expert ATS resume writer. Rewrite these experience bullet points.
+                SYSTEM:
+                You are an expert ATS Resume Writer. Rewrite each bullet using:
+                Action Verb + Technology + Measurable Business Impact
+
+                RULES:
+                - 22 to 32 words per bullet
+                - Preserve factual information
+                - Incorporate target job skills where authentic
+                - Return JSON ONLY (no markdown code blocks, no backticks)
 
                 ROLE: %s at %s
                 CURRENT BULLETS:
@@ -317,11 +398,13 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
 
                 TARGET JOB SKILLS: %s
 
-                RULES:
-                - Use the formula: Action Verb + Technology + Measurable Business Impact.
-                - Rewrite each bullet point to be powerful and ATS keyword-rich.
-                - Return 2 to 4 bullet points, one per line, prefixed with "•".
-                - Return ONLY the bullet points, no commentary.
+                OUTPUT JSON FORMAT:
+                {
+                  "bullets": [
+                    "...",
+                    "..."
+                  ]
+                }
                 """.formatted(
                 exp.getTitle(),
                 exp.getCompany() != null ? exp.getCompany() : "",
@@ -332,16 +415,25 @@ public class AiSuggestionServiceImpl implements AiSuggestionService {
 
     private String buildProjectPrompt(ResumeDTO.ProjectDTO proj, JobDTO job) {
         return """
-                You are an expert ATS resume writer. Rewrite this project description using STAR methodology (Situation, Task, Action, Result).
+                SYSTEM:
+                You are an expert ATS Resume Writer. Rewrite project bullets using STAR methodology (Situation, Task, Action, Result).
 
                 PROJECT: %s
                 CURRENT BULLETS:
                 %s
 
                 RULES:
-                - Output 2 to 3 bullet points, each starting with "•".
-                - Emphasize technical architecture, performance improvements, and tech stack.
-                - Return ONLY the bullet points.
+                - 2 to 3 powerful bullets
+                - 20 to 30 words each
+                - Return JSON ONLY
+
+                OUTPUT JSON FORMAT:
+                {
+                  "bullets": [
+                    "...",
+                    "..."
+                  ]
+                }
                 """.formatted(
                 proj.getName(),
                 proj.getBullets() != null ? String.join("\n", proj.getBullets()) : ""
